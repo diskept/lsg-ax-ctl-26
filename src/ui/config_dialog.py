@@ -34,6 +34,7 @@ class ConfigDialog(QDialog):
         # Serial tab
         serial_tab = QWidget()
         serial_layout = QFormLayout(serial_tab)
+        serial_layout.setVerticalSpacing(7)
         self._port_combo = QComboBox()
         self._port_combo.setEditable(True)
         rescan_btn = QPushButton("Rescan")

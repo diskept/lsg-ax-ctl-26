@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.core.settings import AppSettings
+
 
 class ConnectSelectStep1(QDialog):
     """Select Node Type: Sensor Node or Actuator Node. Exposes chosen group via selected_group."""
@@ -14,10 +16,17 @@ class ConnectSelectStep1(QDialog):
     GROUP_SENSOR = "sensor"
     GROUP_ACTUATOR = "actuator"
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, settings: AppSettings, parent: QWidget | None = None):
         super().__init__(parent)
+        self._settings = settings
         self.setWindowTitle("Select Node Type")
         self._build_ui()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        group = self._settings.get_last_node_group()
+        self._sensor_radio.setChecked(group == self.GROUP_SENSOR)
+        self._actuator_radio.setChecked(group == self.GROUP_ACTUATOR)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)

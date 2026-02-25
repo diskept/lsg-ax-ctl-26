@@ -16,3 +16,17 @@ build/
 
 # Editor
 .vscode/
+.idea/
+
+# STM32 / CubeIDE build
+**/Debug/
+**/Release/
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.bin
+*.hex
+*.map
+*.list

@@ -52,11 +52,11 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar()
         toolbar.setWindowTitle("Main")
         style = self.style()
-        connect_act = QAction(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "", self)
-        connect_act.setToolTip("Connect")
-        connect_act.setStatusTip("Connect to the configured serial port")
-        connect_act.triggered.connect(self._on_connect)
-        toolbar.addAction(connect_act)
+        self._connect_act = QAction(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "", self)
+        self._connect_act.setToolTip("Connect")
+        self._connect_act.setStatusTip("Connect to the configured serial port")
+        self._connect_act.triggered.connect(self._on_connect)
+        toolbar.addAction(self._connect_act)
         disconnect_act = QAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton), "", self)
         disconnect_act.setToolTip("Disconnect")
         disconnect_act.setStatusTip("Disconnect current connection")
@@ -83,9 +83,16 @@ class MainWindow(QMainWindow):
         nm.serial_params_changed.connect(self._on_serial_params_changed)
         nm.info.connect(self._on_info)
         nm.error.connect(self._on_error)
+        self._update_connect_actions_enabled(not nm.is_connected())
+
+    def _update_connect_actions_enabled(self, enabled: bool) -> None:
+        """Enable Connect actions when disconnected, disable when connected."""
+        self._connect_act.setEnabled(enabled)
+        self._connect_menu_act.setEnabled(enabled)
 
     @pyqtSlot(bool, dict)
     def _on_serial_params_changed(self, connected: bool, params: dict) -> None:
+        self._update_connect_actions_enabled(not connected)
         if connected:
             self._ever_connected = True
             self.refresh_serial_summary(True, params)
@@ -147,9 +154,9 @@ class MainWindow(QMainWindow):
         scan_action = QAction("&Scan...", self)
         scan_action.triggered.connect(self._on_scan)
         node_menu.addAction(scan_action)
-        connect_action = QAction("&Connect...", self)
-        connect_action.triggered.connect(self._on_connect)
-        node_menu.addAction(connect_action)
+        self._connect_menu_act = QAction("&Connect...", self)
+        self._connect_menu_act.triggered.connect(self._on_connect)
+        node_menu.addAction(self._connect_menu_act)
         test_action = QAction("&Test...", self)
         test_action.triggered.connect(self._on_test)
         node_menu.addAction(test_action)
@@ -166,25 +173,34 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_settings(self) -> None:
-        dlg = PreferencesDialog(self)
+        dlg = PreferencesDialog(self._settings, self)
         dlg.exec()
 
     @pyqtSlot()
     def _on_connect(self) -> None:
-        step1 = ConnectSelectStep1(self)
+        step1 = ConnectSelectStep1(self._settings, self)
         if not step1.exec():
             return
         group = step1.selected_group
         while True:
-            step2 = ConnectSelectStep2(group, self)
+            step2 = ConnectSelectStep2(group, self._settings, self)
             result = step2.exec()
             if result == QDialog.DialogCode.Accepted:
+                self._settings.set_last_node_group(group)
+                if group == "sensor":
+                    self._settings.set_sensor_type(step2.selected_sensor_type)
+                else:
+                    self._settings.set_actuator_type(step2.selected_actuator_type)
                 self.statusBar().showMessage(
                     f"Node selected: {step2.selected_option_text}", 5000
                 )
+                nm = self._context.node_manager
+                ok = nm.connect()
+                if not ok:
+                    self.statusBar().showMessage("Connection failed", 3000)
                 return
             if result == ConnectSelectStep2.RESULT_BACK:
-                step1 = ConnectSelectStep1(self)
+                step1 = ConnectSelectStep1(self._settings, self)
                 if not step1.exec():
                     return
                 group = step1.selected_group

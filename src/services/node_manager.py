@@ -24,6 +24,10 @@ class NodeManager(QObject):
         self._serial = SerialService(self)
         self._settings = AppSettings()
 
+    def is_connected(self) -> bool:
+        """Return whether the serial service is currently connected."""
+        return self._serial.is_connected()
+
     def scan(self) -> None:
         """Emit scanned(list_ports()); info message if list empty/non-empty."""
         ports = self._serial.list_ports()
@@ -35,14 +39,14 @@ class NodeManager(QObject):
             logger.info("No serial ports found.")
             self.info.emit("No serial ports found.")
 
-    def connect(self) -> None:
-        """Read from AppSettings and call connect_with(...)."""
+    def connect(self) -> bool:
+        """Read from AppSettings and call connect_with(...). Return True on success."""
         port = self._settings.get_last_port()
         if not port or not port.strip():
             logger.error("connect failed")
             self.error.emit("connect failed")
-            return
-        self.connect_with(
+            return False
+        return self.connect_with(
             port.strip(),
             self._settings.get_baud(),
             self._settings.get_parity(),

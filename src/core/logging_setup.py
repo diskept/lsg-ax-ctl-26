@@ -16,7 +16,7 @@ def init_logging(app_name: str = "AxiomCanon") -> dict:
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
     log_dir = os.path.join(base, "LSG", app_name, "logs")
     os.makedirs(log_dir, exist_ok=True)
-    _log_dir = log_dir
+    _log_dir = os.path.abspath(log_dir)
 
     log_file = os.path.join(log_dir, "app.log")
 
@@ -40,5 +40,16 @@ def init_logging(app_name: str = "AxiomCanon") -> dict:
 
 
 def get_log_dir() -> str | None:
-    """Return the log directory path set by init_logging(), or None if not yet initialized."""
-    return _log_dir
+    """Return the absolute log directory path set by init_logging(), or None if not yet initialized."""
+    if _log_dir is None:
+        return None
+    return os.path.abspath(_log_dir)
+
+
+def get_default_log_dir(app_name: str = "AxiomCanon") -> str:
+    """Return the default log directory path as absolute (used when init_logging has not been called)."""
+    base = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    log_dir = os.path.join(base, "LSG", app_name, "logs")
+    return os.path.abspath(log_dir)

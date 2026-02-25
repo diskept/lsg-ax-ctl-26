@@ -25,6 +25,7 @@ class QuickConnectPanel(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
+        layout.setVerticalSpacing(7)
 
         self._port_combo = QComboBox()
         self._port_combo.setEditable(True)

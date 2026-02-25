@@ -12,6 +12,7 @@ DEFAULT_STOP_BITS = "1"
 DEFAULT_SENSOR_TYPE = "Indoor/Horticulture"
 DEFAULT_ACTUATOR_TYPE = "16 Switch + 8 Actuator"
 DEFAULT_PROTOCOL_VERSION = "1.0"
+DEFAULT_LAST_NODE_GROUP = "sensor"
 
 
 def _settings_ini_path() -> str:
@@ -22,12 +23,21 @@ def _settings_ini_path() -> str:
     return os.path.join(config_dir, "settings.ini")
 
 
+def get_settings_path() -> str:
+    """Return the absolute path of the settings (INI) file used by QSettings."""
+    return os.path.abspath(_settings_ini_path())
+
+
 class AppSettings:
     """QSettings-backed configuration stored in a .ini file."""
 
     def __init__(self) -> None:
         ini_path = _settings_ini_path()
         self._q = QSettings(ini_path, QSettings.Format.IniFormat)
+
+    def settings_path(self) -> str:
+        """Return the absolute path of the settings (INI) file currently used by this instance."""
+        return get_settings_path()
 
     def get_last_port(self) -> str | None:
         value = self._q.value("lastPort")
@@ -114,6 +124,15 @@ class AppSettings:
 
     def set_node_address(self, node_address: str) -> None:
         self._q.setValue("nodeAddress", node_address)
+        self._q.sync()
+
+    def get_last_node_group(self) -> str:
+        """Return last connected node group: 'sensor' or 'actuator'."""
+        value = self._q.value("lastNodeGroup")
+        return str(value) if value in ("sensor", "actuator") else DEFAULT_LAST_NODE_GROUP
+
+    def set_last_node_group(self, group: str) -> None:
+        self._q.setValue("lastNodeGroup", group)
         self._q.sync()
 
     def get_protocol_version(self) -> str:

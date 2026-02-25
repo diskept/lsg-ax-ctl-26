@@ -25,6 +25,7 @@ class NodeConnectDialog(QDialog):
     def _build_ui(self) -> None:
         self.setWindowTitle("Connect — Node")
         layout = QFormLayout(self)
+        layout.setVerticalSpacing(7)
 
         sensor_group = QGroupBox("Sensor Node type")
         sensor_layout = QVBoxLayout(sensor_group)
