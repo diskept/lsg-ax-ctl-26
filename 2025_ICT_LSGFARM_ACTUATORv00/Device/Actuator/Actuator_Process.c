@@ -313,6 +313,8 @@ void Actuator_OCS_Relay_Get_Tx_Data(void)	//  Relay Status Get
 
 	ACT_TX_Enable;
 	ACT_LED_ON;
+	Debug_printf("[RB->] GET len=%d id=%02X fn=%02X\r\n",
+			nIndex, Actuator_Ring_Buffer.TxBuffer[0], Actuator_Ring_Buffer.TxBuffer[1]);
 	HAL_UART_Transmit(&huart3, Actuator_Ring_Buffer.TxBuffer, nIndex, 1000);
 	ACT_LED_OFF;
 	ACT_RX_Enable;
@@ -389,6 +391,8 @@ void Actuator_OCS_Relay_Set_Tx_Data(uint32_t wRelayValue)	//  Relay Status Set
 
 	ACT_TX_Enable;
 	ACT_LED_ON;
+	Debug_printf("[RB->] SET len=%d id=%02X fn=%02X mask=%08lX\r\n",
+			nIndex, Actuator_Ring_Buffer.TxBuffer[0], Actuator_Ring_Buffer.TxBuffer[1], (unsigned long)mask);
 	HAL_UART_Transmit(&huart3, Actuator_Ring_Buffer.TxBuffer, nIndex, 1000);
 	ACT_LED_OFF;
 	ACT_RX_Enable;
@@ -767,10 +771,21 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 	if(nSize > 2)
 		Crc_Check((volatile uint8_t *)pPacket, nSize-2);
 	else
+	{
+		Debug_printf(" Actuator_Packet_Process: nSize too small (%d)\n", nSize);
 		return;
+	}
 
 	if((CRC1 == pPacket[nSize - 2]) && (CRC2 == pPacket[nSize - 1]))
 	{
+		/* 정상 CRC */
+		if(pPacket[1] & 0x80)
+		{
+			/* Modbus 예외 응답: fn|0x80, 예외코드 pPacket[2] */
+			Debug_printf(" OCS RX exception: id=%02X fn=%02X ex=%02X size=%d\n",
+					pPacket[0], pPacket[1], pPacket[2], nSize);
+		}
+
 		if(pPacket[0] == OCS_RELAY16CH_ID)
 		{
 			if(Actuator_Ring_Buffer.Acutator == ACTUATOR_OCS_RELAYCH_READ)
@@ -784,10 +799,14 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 						uint16_t regHi = (uint16_t)(((uint16_t)pPacket[5] << 8) | pPacket[6]);		// Addr 0x0001 → CH17..32
 						Actuator_OCS_Control.nReadRelay = ((uint32_t)regHi << 16) | regLo;  		// [HI:CH17..32][LO:CH1..16]
                         Actuator_OCS_Control.State = ACTUATOR_RECV_OK;
+						Debug_printf(" OCS RX normal: id=%02X fn=%02X byte=%02X nReadRelay=%08lX\n",
+								pPacket[0], pPacket[1], pPacket[2], (unsigned long)Actuator_OCS_Control.nReadRelay);
                     }
                     else
                     {
                         Actuator_OCS_Control.State = ACTUATOR_RECV_ERROR;
+						Debug_printf(" OCS RX abnormal READ (32ch): id=%02X fn=%02X byte=%02X size=%d\n",
+								pPacket[0], pPacket[1], pPacket[2], nSize);
                     }
 				}
 				else
@@ -796,10 +815,14 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 					{
 						Actuator_OCS_Control.nReadRelay =  (uint16_t)(((uint16_t)pPacket[3] << 8) + pPacket[4]);
 						Actuator_OCS_Control.State = ACTUATOR_RECV_OK;
+						Debug_printf(" OCS RX normal: id=%02X fn=%02X byte=%02X nReadRelay=%04X\n",
+								pPacket[0], pPacket[1], pPacket[2], Actuator_OCS_Control.nReadRelay);
 					}
 					else
 					{
 						Actuator_OCS_Control.State = ACTUATOR_RECV_ERROR;
+						Debug_printf(" OCS RX abnormal READ (16ch): id=%02X fn=%02X byte=%02X size=%d\n",
+								pPacket[0], pPacket[1], pPacket[2], nSize);
 					}
 				}
 			}
@@ -810,10 +833,14 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 					if(pPacket[1] == 0x0F && pPacket[5] == 0x20)
 					{
 						Actuator_OCS_Control.State = ACTUATOR_SEND_OK;
+						Debug_printf(" OCS TX ack normal (32ch): id=%02X fn=%02X addrHi=%02X addrLo=%02X\n",
+								pPacket[0], pPacket[1], pPacket[3], pPacket[4]);
 					}
 					else
 					{
 						Actuator_OCS_Control.State = ACTUATOR_SEND_ERROR;
+						Debug_printf(" OCS TX ack abnormal (32ch): id=%02X fn=%02X size=%d\n",
+								pPacket[0], pPacket[1], nSize);
 					}
 				}
 				else
@@ -821,10 +848,14 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 					if(pPacket[1] == 0x0F && pPacket[5] == 0x10)
 					{
 						Actuator_OCS_Control.State = ACTUATOR_SEND_OK;
+						Debug_printf(" OCS TX ack normal (16ch): id=%02X fn=%02X addrHi=%02X addrLo=%02X\n",
+								pPacket[0], pPacket[1], pPacket[3], pPacket[4]);
 					}
 					else
 					{
 						Actuator_OCS_Control.State = ACTUATOR_SEND_ERROR;
+						Debug_printf(" OCS TX ack abnormal (16ch): id=%02X fn=%02X size=%d\n",
+								pPacket[0], pPacket[1], nSize);
 					}
 				}
 			}
@@ -843,9 +874,13 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 						uint16_t regHi = (uint16_t)(((uint16_t)pPacket[5] << 8) | pPacket[6]);			// Addr 0x0001 → CH17..32
 						Actuator_OCS_EXT_Control.nReadRelay = ((uint32_t)regHi << 16) | regLo;  		// [HI:CH17..32][LO:CH1..16]
                         Actuator_OCS_EXT_Control.State = ACTUATOR_RECV_OK;
+						Debug_printf(" OCS EXT RX normal: id=%02X fn=%02X byte=%02X nReadRelay=%08lX\n",
+								pPacket[0], pPacket[1], pPacket[2], (unsigned long)Actuator_OCS_EXT_Control.nReadRelay);
                     }
                     else {
                     	Actuator_OCS_EXT_Control.State = ACTUATOR_RECV_ERROR;
+						Debug_printf(" OCS EXT RX abnormal READ (32ch): id=%02X fn=%02X byte=%02X size=%d\n",
+								pPacket[0], pPacket[1], pPacket[2], nSize);
                     }
 				}
 				else
@@ -854,10 +889,14 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 					{
 						Actuator_OCS_EXT_Control.nReadRelay =  (uint16_t)(((uint16_t)pPacket[3] << 8) + pPacket[4]);
 						Actuator_OCS_EXT_Control.State = ACTUATOR_RECV_OK;
+						Debug_printf(" OCS EXT RX normal: id=%02X fn=%02X byte=%02X nReadRelay=%04X\n",
+								pPacket[0], pPacket[1], pPacket[2], Actuator_OCS_EXT_Control.nReadRelay);
 					}
 					else
 					{
 						Actuator_OCS_EXT_Control.State = ACTUATOR_RECV_ERROR;
+						Debug_printf(" OCS EXT RX abnormal READ (16ch): id=%02X fn=%02X byte=%02X size=%d\n",
+								pPacket[0], pPacket[1], pPacket[2], nSize);
 					}
 				}
 			}
@@ -867,22 +906,30 @@ void Actuator_Packet_Process(uint8_t* pPacket, uint8_t nSize)
 				{
 					if(pPacket[1] == 0x0F && pPacket[5] == 0x20)
 					{
-						Actuator_OCS_EXT_Control.State = ACTUATOR_SEND_OK;
+						Actuator_OCS_Control.State = ACTUATOR_SEND_OK;
+						Debug_printf(" OCS EXT TX ack normal (32ch): id=%02X fn=%02X addrHi=%02X addrLo=%02X\n",
+								pPacket[0], pPacket[1], pPacket[3], pPacket[4]);
 					}
 					else
 					{
-						Actuator_OCS_EXT_Control.State = ACTUATOR_SEND_ERROR;
+						Actuator_OCS_Control.State = ACTUATOR_SEND_ERROR;
+						Debug_printf(" OCS EXT TX ack abnormal (32ch): id=%02X fn=%02X size=%d\n",
+								pPacket[0], pPacket[1], nSize);
 					}
 				}
 				else
 				{
 					if(pPacket[1] == 0x0F && pPacket[5] == 0x10)
 					{
-						Actuator_OCS_EXT_Control.State = ACTUATOR_SEND_OK;
+						Actuator_OCS_Control.State = ACTUATOR_SEND_OK;
+						Debug_printf(" OCS EXT TX ack normal (16ch): id=%02X fn=%02X addrHi=%02X addrLo=%02X\n",
+								pPacket[0], pPacket[1], pPacket[3], pPacket[4]);
 					}
 					else
 					{
-						Actuator_OCS_EXT_Control.State = ACTUATOR_SEND_ERROR;
+						Actuator_OCS_Control.State = ACTUATOR_SEND_ERROR;
+						Debug_printf(" OCS EXT TX ack abnormal (16ch): id=%02X fn=%02X size=%d\n",
+								pPacket[0], pPacket[1], nSize);
 					}
 				}
 			}
@@ -953,7 +1000,11 @@ void Actuator_OCS_Relay_Control_Proecess(void)
 		case OCS_RELAY_STEP_STATUS_READ_WAIT :		// 3
 			if(Actuator_OCS_Control.State == ACTUATOR_RECV_OK) {
 				if(Actuator_OCS_Control.nWaitTime >= ACT_SCAN_DELAY) {
-					Debug_printf(" OCS nReadRelay : %02X",Actuator_OCS_Control.nReadRelay);
+#if (NodeVersion == RELAY_32CH_VER)
+					Debug_printf(" OCS nReadRelay : %08lX", (unsigned long)Actuator_OCS_Control.nReadRelay);
+#else
+					Debug_printf(" OCS nReadRelay : %02X", (unsigned int)Actuator_OCS_Control.nReadRelay);
+#endif
 
 					Actuator_OCS_Next_Step(OCS_RELAY_STEP_WRITE_DATA_MASK);
 				}
@@ -1369,7 +1420,11 @@ void Actuator_OCS_Relay_Control_Proecess(void)
 			Actuator_OCS_Next_Step(OCS_RELAY_STEP_DATA_WRITE);
 			break;
 		case OCS_RELAY_STEP_DATA_WRITE :			// 5
-			Debug_printf(" OCS nWriteRelay : %02X\n",Actuator_OCS_Control.nWriteRelay);
+#if (NodeVersion == RELAY_32CH_VER)
+			Debug_printf(" OCS nWriteRelay : %08lX\n", (unsigned long)Actuator_OCS_Control.nWriteRelay);
+#else
+			Debug_printf(" OCS nWriteRelay : %02X\n", (unsigned int)Actuator_OCS_Control.nWriteRelay);
+#endif
 			Actuator_OCS_Relay_Set_Tx_Data(Actuator_OCS_Control.nWriteRelay);
 
 			Actuator_OCS_Next_Step(OCS_RELAY_STEP_DATA_WRITE_WAIT);
@@ -2943,7 +2998,7 @@ void Debug_printf(const char* fmt, ...)
 	va_list argptr;
 
 	va_start(argptr, fmt);
-	vsprintf(buffer, fmt, argptr);
+	vsnprintf(buffer, sizeof(buffer), fmt, argptr);
 	va_end(argptr);
 
 	Debug_PutStr(buffer);

@@ -1,9 +1,10 @@
 """Main window for Axiom Canon (LSG-AX-CTL-26)."""
 import logging
 
-from PyQt6.QtCore import QUrl, pyqtSlot
+from PyQt6.QtCore import QUrl, pyqtSlot, QObject, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
+    QDockWidget,
     QDialog,
     QFrame,
     QLabel,
@@ -13,17 +14,38 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QStyle,
+    QTextEdit,
     QToolBar,
     QWidget,
 )
 from src.core.app_context import AppContext
 from src.core.logging_setup import get_log_dir
 from src.core.settings import AppSettings
-from src.ui.preferences_dialog import PreferencesDialog
 from src.ui.connect_select_step1 import ConnectSelectStep1
 from src.ui.connect_select_step2 import ConnectSelectStep2
+from src.ui.ocs_lamp_panel import OCSLampPanel, parse_ocs_status_line
+from src.ui.preferences_dialog import PreferencesDialog
 
 logger = logging.getLogger("ui.main_window")
+
+
+class _LogEmitter(QObject):
+    message = pyqtSignal(str)
+
+
+class _QtLogHandler(logging.Handler):
+    """Logging.Handler that forwards formatted records to a Qt signal."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.emitter = _LogEmitter()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+        except Exception:
+            return
+        self.emitter.message.emit(msg)
 
 
 class MainWindow(QMainWindow):
@@ -34,7 +56,16 @@ class MainWindow(QMainWindow):
         self._context = AppContext()
         self._settings = AppSettings()
         self._ever_connected = False
+        self._log_view: QTextEdit | None = None
+        self._log_handler: _QtLogHandler | None = None
+        self._log_queue: list[str] = []
+        self._log_flush_timer: QTimer | None = None
+        self._ocs_lamp_dock: QDockWidget | None = None
+        self._ocs_lamp_panel: OCSLampPanel | None = None
+        self._log_dock: QDockWidget | None = None
         self._build_ui()
+        self._init_ocs_lamp_dock()
+        self._init_log_dock()
         self._connect_signals()
 
     def _build_ui(self) -> None:
@@ -78,6 +109,102 @@ class MainWindow(QMainWindow):
         self.summary_label.hide()
         self.setStatusBar(self._status_bar)
 
+    def _init_ocs_lamp_dock(self) -> None:
+        """개폐기 상태 램프 도크 (연결 시 채널 수에 맞춰 재구성)."""
+        dock = QDockWidget("개폐기 상태", self)
+        dock.setObjectName("ocsLampDock")
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.TopDockWidgetArea
+        )
+        # 초기에는 8채널 빈 패널 (연결 시 재구성)
+        panel = OCSLampPanel(8)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        self._ocs_lamp_dock = dock
+        self._ocs_lamp_panel = panel
+
+    def _rebuild_ocs_lamp_panel(self, channel_count: int) -> None:
+        """연결 시 선택된 채널 수로 램프 패널 삭제 후 새로 생성."""
+        if not self._ocs_lamp_dock:
+            return
+        if self._ocs_lamp_panel:
+            self._ocs_lamp_panel.deleteLater()
+            self._ocs_lamp_panel = None
+        panel = OCSLampPanel(channel_count)
+        self._ocs_lamp_dock.setWidget(panel)
+        self._ocs_lamp_panel = panel
+
+    def _init_log_dock(self) -> None:
+        """Create a dockable log viewer and connect it to Python logging."""
+        dock = QDockWidget("Log", self)
+        dock.setObjectName("logDock")
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.TopDockWidgetArea
+        )
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        # Long-running test 중 로그가 매우 많아지면 append가 느려져 UI가 갱신이 지연될 수 있음.
+        # QTextEdit는 QTextDocument를 통해 block count를 제한한다.
+        view.document().setMaximumBlockCount(4000)
+        dock.setWidget(view)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        self._log_dock = dock
+        self._log_view = view
+        # 램프 도크를 로그 도크 위에 세로 분할
+        if self._ocs_lamp_dock:
+            self.splitDockWidget(self._ocs_lamp_dock, dock, Qt.Orientation.Vertical)
+
+        handler = _QtLogHandler()
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        handler.emitter.message.connect(self._append_log_line)
+        logging.getLogger().addHandler(handler)
+        self._log_handler = handler
+
+        # 로그가 매우 많을 때 QTextEdit 업데이트가 과도해져 UI가 멈춘 것처럼 보일 수 있음.
+        # 그래서 append를 즉시 하지 않고 일정 주기로 큐를 배치로 flush한다.
+        self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setInterval(150)  # ms
+        self._log_flush_timer.timeout.connect(self._flush_log_queue)
+        self._log_flush_timer.start()
+
+    def _flush_log_queue(self) -> None:
+        if not self._log_view or not self._log_queue:
+            return
+
+        bar = self._log_view.verticalScrollBar()
+        was_near_bottom = bar.value() >= bar.maximum() - 3
+
+        max_lines = 300  # 한 번 flush 시 최대 표시 라인
+        batch = self._log_queue[:max_lines]
+        self._log_queue = self._log_queue[max_lines:]
+
+        for line in batch:
+            self._log_view.append(line)
+
+        # 사용자가 아래를 보고 있을 때만 따라가게 함
+        if was_near_bottom:
+            bar.setValue(bar.maximum())
+
+    @pyqtSlot(str)
+    def _append_log_line(self, line: str) -> None:
+        # 1) 램프 업데이트는 즉시 처리 (가벼움)
+        # 펌웨어 OCS 상태 메시지면 램프 갱신
+        parsed = parse_ocs_status_line(line)
+        if parsed and self._ocs_lamp_panel:
+            ch, status = parsed
+            self._ocs_lamp_panel.set_channel_status(ch, status)
+
+        # 2) 텍스트 도크는 큐로 모아서 일정 주기로 배치 flush
+        self._log_queue.append(line)
+
     def _connect_signals(self) -> None:
         nm = self._context.node_manager
         nm.serial_params_changed.connect(self._on_serial_params_changed)
@@ -97,6 +224,9 @@ class MainWindow(QMainWindow):
             self._ever_connected = True
             self.refresh_serial_summary(True, params)
             self.statusBar().showMessage("Connected", 1500)
+            # 연결 시 선택된 구동기 타입에 따라 개폐기 램프 개수 재구성
+            n = self._settings.get_ocs_channel_count()
+            self._rebuild_ocs_lamp_panel(n)
         else:
             if self._ever_connected:
                 self.statusBar().showMessage("Disconnected", 1500)
@@ -219,7 +349,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def _on_test(self) -> None:
         self._context.node_manager.test()
-        self.statusBar().showMessage("Test complete", 2000)
+        self.statusBar().showMessage("타임 동작 테스트 시작 (로그·램프 확인)", 4000)
 
     @pyqtSlot()
     def _on_open_logs_folder(self) -> None:

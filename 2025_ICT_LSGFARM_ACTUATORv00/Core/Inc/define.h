@@ -31,8 +31,10 @@
 
 // KS X 3267 기본 구성 스위치 16ch, 개폐기 8ch(relay 16)
 // Actuator node Ver 1.0 : 스위치 16CH, 개페기 8ch(relay 16) + Ext. 개페기 8ch(relay 16)
-// Actuator node Ver 1.1 : 스위치 16CH, 개폐기 16ch(relay 32) + Ext. 개폐기 16ch(relay 32)
-#define NodeVersion						RELAY_32CH_VER					// OSC : 1 = 릴레이모듈(8CH) 1버전, 2 = 릴레이모듈(16CH) 2버전, 3 = 릴레이모듈(32CH)   이외는 버전 1
+// Actuator node Ver 1.1 : 스위치 16CH, 개폐기 16ch(relay 32) 단일 보드
+// RELAY_16CH_VER: OCS 1~8 메인보드 + OCS 9~16 EXT 보드 (main에서 Actuator_OCS_EXT_Relay_Control_Proecess 호출)
+// RELAY_32CH_VER: OCS 1~16 단일 32ch 보드 (EXT 미호출, Actuator_OCS_Relay_Control_Proecess만 사용)
+#define NodeVersion						RELAY_32CH_VER					// 2=16CH(이중보드), 3=32CH(단일보드)
 
 
 #define SETBIT(GPIO,BIT)				(GPIO->BSRR = BIT)

@@ -85,11 +85,15 @@ uint8_t sec_timer_create()
 
 uint32_t sec_timer_get_sec(uint8_t tmr)
 {
+	if (tmr >= SEC_MAX_TIMER)
+		return 0;
 	return sec_timer[tmr].nSecTimerTick;
 }
 
 void sec_timer_reset(uint8_t tmr)
 {
+	if (tmr >= SEC_MAX_TIMER)
+		return;
 	sec_timer[tmr].nSecTimerTick = 0;
 }
 
@@ -169,11 +173,14 @@ uint8_t msec_timer_create()
 
 uint32_t msec_timer_get_msec(uint8_t tmr)
 {
-	//return sec_timer[tmr].nSecTimerTick;
-	return msec_timer[tmr].nMsecTimerTick;		// 25.12.31. Fixed by diskept
+	if (tmr >= SEC_MAX_TIMER)
+		return 0;
+	return msec_timer[tmr].nMsecTimerTick;
 }
 
 void msec_timer_reset(uint8_t tmr)
 {
+	if (tmr >= SEC_MAX_TIMER)
+		return;
 	msec_timer[tmr].nMsecTimerTick = 0;
 }

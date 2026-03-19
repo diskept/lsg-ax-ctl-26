@@ -13,14 +13,27 @@
 extern uint8_t MstCRC1, MstCRC2;
 extern UART_HandleTypeDef huart1;
 
-void Master_RS485_Push_Data(uint8_t nData)									// 통신 수신버퍼 입력 처리 구간
+void Master_RS485_Push_Data(uint8_t nData)									// 통신 수신버퍼 입력 처리 구간 (오버플로우 시 최신 유지)
 {
-	Master_Ring_Buffer.RxBuffer[Master_Ring_Buffer.nSaveIndex++] = nData;
+	uint16_t next = (uint16_t)(Master_Ring_Buffer.nSaveIndex + 1U);
 
-    if(Master_Ring_Buffer.nSaveIndex >= UART_RX_RING_BUFFER_SIZE)
-    {
-    	Master_Ring_Buffer.nSaveIndex = 0;
-    }
+	if (next >= UART_RX_RING_BUFFER_SIZE)
+	{
+		next = 0;
+	}
+
+	/* Buffer full: drop oldest byte to keep receiver alive (same as Actuator_RS485_Push_Data) */
+	if (next == Master_Ring_Buffer.nProcessIndex)
+	{
+		Master_Ring_Buffer.nProcessIndex++;
+		if (Master_Ring_Buffer.nProcessIndex >= UART_RX_RING_BUFFER_SIZE)
+		{
+			Master_Ring_Buffer.nProcessIndex = 0;
+		}
+	}
+
+	Master_Ring_Buffer.RxBuffer[Master_Ring_Buffer.nSaveIndex] = nData;
+	Master_Ring_Buffer.nSaveIndex = next;
 }
 
 uint8_t Master_RS485_Pop_Data(void)											// 통신 수신버퍼 출력 처리 구간
@@ -170,7 +183,8 @@ void Master_Packet_Process(uint8_t* pPacket, uint16_t nSize)
 //				Debug_printf(" Quantity Over Error : %02X\r\n", pPacket[1]);
 //				Master_Exception_0x03_Ack_Process(pPacket[1]);
 //			}
-			if((ActNode.nRequestDataNo == 0) || (ActNode.nRequestDataNo > 0x0087))	// Modbus RTU: Read Holding/Input Registers quantity = 1..125 (0x007D) 25.12.31. Fixed by diskept
+			/* Exception: allow up to 135 (0x87) registers; Modbus standard max is 125 (0x7D). */
+			if ((ActNode.nRequestDataNo == 0) || (ActNode.nRequestDataNo > 0x0087))
 			{
 			    Debug_printf(" Quantity Over Error : %02X\r\n", pPacket[1]);
 			    Master_Exception_0x03_Ack_Process(pPacket[1]);
@@ -196,8 +210,8 @@ void Master_Packet_Process(uint8_t* pPacket, uint16_t nSize)
 //				Master_Exception_0x03_Ack_Process(pPacket[1]);
 //			}
 
-			// 25.12.31. Fixed by diskept
-			if( (ActNode.nRequestDataNo == 0) || (ActNode.nRequestDataNo > 0x0087) )
+			/* Exception: allow up to 135 (0x87) registers for Read Input. */
+			if ((ActNode.nRequestDataNo == 0) || (ActNode.nRequestDataNo > 0x0087))
 			{
 			    Debug_printf(" Quantity Over Error : %02X\r\n", pPacket[1]);
 			    Master_Exception_0x03_Ack_Process(pPacket[1]);
@@ -1022,6 +1036,11 @@ void Master_Packet_Process(uint8_t* pPacket, uint16_t nSize)
 				if(ActNode.nConCount == 1) ActNode.bConMode = SINGLE_MODE;
 				else if (ActNode.nConCount > 1) ActNode.bConMode = MULTI_MODE;
 
+				Debug_printf(" OCS Req addr=%d count=%d mode=%s\n",
+						ActNode.nRequestAddr,
+						ActNode.nConCount,
+						(ActNode.bConMode == SINGLE_MODE) ? "SINGLE" : "MULTI");
+
 				for(uint8_t cnt = 0; cnt < ActNode.nConCount; cnt++) {
 					ActNode.nRequestAddr = tempAddr;
 					tempAddr += 4;
@@ -1794,20 +1813,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 1 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 1 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 1 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM1].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 1 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM1].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 1 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 
@@ -1823,20 +1847,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 2 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 2 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 2 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM2].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 2 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM2].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 2 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1851,20 +1880,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 3 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 3 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 3 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM3].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 3 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM3].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 3 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1879,20 +1913,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 4 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 4 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 4 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM4].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 4 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM4].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 4 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1907,20 +1946,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 5 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 5 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 5 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM5].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 5 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM5].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 5 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1935,20 +1979,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 6 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 6 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 6 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM6].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 6 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM6].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 6 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1963,20 +2012,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 7 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 7 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 7 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM7].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 7 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM7].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 7 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -1991,20 +2045,25 @@ void Master_Actuator_OCS_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 8 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 8 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 8 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM8].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 8 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM8].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 8 CLOSE\n");
 		}
 		Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
 	}
@@ -2023,20 +2082,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 9 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 9 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 9 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM9].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 9 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM9].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 9 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2059,20 +2123,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 10 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 10 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 10 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM10].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 10 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM10].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 10 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2095,20 +2164,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 11 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 11 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 11 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM11].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 11 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM11].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 11 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2131,20 +2205,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 12 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 12 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 12 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM12].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 12 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM12].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 12 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2167,20 +2246,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 13 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 13 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 13 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM13].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 13 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM13].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 13 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2203,20 +2287,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 14 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 14 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 14 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM14].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 14 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM14].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 14 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2239,20 +2328,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 15 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 15 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 15 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM15].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 15 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM15].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 15 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2275,20 +2369,25 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 		if(Control.nControl == CONTROL_STOP ) {
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 16 STOP\n");
 		}
 		else if(Control.nControl  == CONTROL_OPEN ) {
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_OPEN;
+			Debug_printf("OCS_STATUS 16 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_CLOSE ) {
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_CLOSE;
+			Debug_printf("OCS_STATUS 16 CLOSE\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_OPEN ) {
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_TIMED_OPEN;
 			OCS_Control[OCS_NUM16].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 16 OPEN\n");
 		}
 		else if(Control.nControl  == CONTROL_TIMED_CLOSE ) {
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_TIMED_CLOSE;
 			OCS_Control[OCS_NUM16].nHoldingTime = Control.nOprTime;
+			Debug_printf("OCS_STATUS 16 CLOSE\n");
 		}
 
 		if(NodeVersion == RELAY_16CH_VER)
@@ -2304,7 +2403,8 @@ void Master_Actuator_OCS_EXT_Updata_Process(OCSWITCH_CONTROL Control)
 
 void Master_Actuator_OnTime_Process(void)
 {
-	Debug_printf(">>\n");
+	// Debug prompt spam — disable for log-based analysis.
+	// Debug_printf(">>\n");
 //=============================================================================================================
 	if(OCS_Control[OCS_NUM1].OCStatus == OCS_TIME_OPEN_START) {
 		OCS_Control[OCS_NUM1].nGetTime = sec_timer_get_sec(OCS_Control[OCS_NUM1].mTMR_1Sec);
@@ -2319,6 +2419,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 1 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_1_TIME_ADDR] = OCS_Control[OCS_NUM1].nRemainingTime;
@@ -2338,6 +2439,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM1].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 1 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_1_TIME_ADDR] = OCS_Control[OCS_NUM1].nRemainingTime;
@@ -2374,6 +2476,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 2 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_2_TIME_ADDR] = OCS_Control[OCS_NUM2].nRemainingTime;
@@ -2393,6 +2496,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM2].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 2 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_2_TIME_ADDR] = OCS_Control[OCS_NUM2].nRemainingTime;
@@ -2429,6 +2533,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 3 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_3_TIME_ADDR] = OCS_Control[OCS_NUM3].nRemainingTime;
@@ -2448,6 +2553,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM3].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 3 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_3_TIME_ADDR] = OCS_Control[OCS_NUM3].nRemainingTime;
@@ -2484,6 +2590,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 4 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_4_TIME_ADDR] = OCS_Control[OCS_NUM4].nRemainingTime;
@@ -2503,6 +2610,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM4].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 4 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_4_TIME_ADDR] = OCS_Control[OCS_NUM4].nRemainingTime;
@@ -2539,6 +2647,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 5 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_5_TIME_ADDR] = OCS_Control[OCS_NUM5].nRemainingTime;
@@ -2558,6 +2667,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM5].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 5 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_5_TIME_ADDR] = OCS_Control[OCS_NUM5].nRemainingTime;
@@ -2594,6 +2704,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 6 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_6_TIME_ADDR] = OCS_Control[OCS_NUM6].nRemainingTime;
@@ -2613,6 +2724,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM6].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 6 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_6_TIME_ADDR] = OCS_Control[OCS_NUM6].nRemainingTime;
@@ -2649,6 +2761,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 7 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_7_TIME_ADDR] = OCS_Control[OCS_NUM7].nRemainingTime;
@@ -2668,6 +2781,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM7].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 7 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_7_TIME_ADDR] = OCS_Control[OCS_NUM7].nRemainingTime;
@@ -2704,6 +2818,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 8 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_8_TIME_ADDR] = OCS_Control[OCS_NUM8].nRemainingTime;
@@ -2723,6 +2838,7 @@ void Master_Actuator_OnTime_Process(void)
 
 			OCS_Control[OCS_NUM8].OCSCmd = OCS_STOP;
 			Actuator_OCS_Control.Step = OCS_RELAY_STEP_WRITE_CMD;
+			Debug_printf("OCS_STATUS 8 STOP\n");
 		}
 		else {
 			ActNode.NodeReg[OCSWITCH_8_TIME_ADDR] = OCS_Control[OCS_NUM8].nRemainingTime;
@@ -2758,6 +2874,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_9_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 9 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2784,6 +2901,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_9_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM9].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 9 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2827,6 +2945,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_10_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 10 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2853,6 +2972,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_10_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM10].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 10 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2896,6 +3016,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_11_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 11 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2922,6 +3043,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_11_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM11].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 11 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2965,6 +3087,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_12_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 12 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -2991,6 +3114,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_12_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM12].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 12 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3034,6 +3158,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_13_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 13 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3060,6 +3185,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_13_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM13].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 13 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3103,6 +3229,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_14_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 14 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3129,6 +3256,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_14_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM14].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 14 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3172,6 +3300,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_15_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 15 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3198,6 +3327,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_15_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM15].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 15 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3241,6 +3371,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_16_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 16 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;
@@ -3267,6 +3398,7 @@ void Master_Actuator_OnTime_Process(void)
 			ActNode.NodeReg[OCSWITCH_16_TIME_ADDR] = 0;
 
 			OCS_Control[OCS_NUM16].OCSCmd = OCS_STOP;
+			Debug_printf("OCS_STATUS 16 STOP\n");
 			if(NodeVersion == RELAY_16CH_VER)
 			{
 				Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_WRITE_CMD;

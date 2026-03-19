@@ -13,6 +13,8 @@ DEFAULT_SENSOR_TYPE = "Indoor/Horticulture"
 DEFAULT_ACTUATOR_TYPE = "16 Switch + 8 Actuator"
 DEFAULT_PROTOCOL_VERSION = "1.0"
 DEFAULT_LAST_NODE_GROUP = "sensor"
+DEFAULT_DEBUG_PORT = "COM3"
+DEFAULT_DEBUG_BAUD = 38400
 
 
 def _settings_ini_path() -> str:
@@ -118,6 +120,13 @@ class AppSettings:
         self._q.setValue("actuatorType", actuator_type)
         self._q.sync()
 
+    def get_ocs_channel_count(self) -> int:
+        """연결된 구동기 타입에 따른 개폐기(OCS) 채널 수. 8 또는 16."""
+        t = (self.get_actuator_type() or "").strip()
+        if "16 Actuator" in t or "1×32CH" in t or "1x32CH" in t or "2×16CH" in t or "2x16CH" in t:
+            return 16
+        return 8
+
     def get_node_address(self) -> str:
         value = self._q.value("nodeAddress")
         return str(value) if value else ""
@@ -141,4 +150,25 @@ class AppSettings:
 
     def set_protocol_version(self, protocol_version: str) -> None:
         self._q.setValue("protocolVersion", protocol_version)
+        self._q.sync()
+
+    def get_debug_port(self) -> str:
+        value = self._q.value("debugPort")
+        return str(value) if value else DEFAULT_DEBUG_PORT
+
+    def set_debug_port(self, port: str) -> None:
+        self._q.setValue("debugPort", port)
+        self._q.sync()
+
+    def get_debug_baud(self) -> int:
+        value = self._q.value("debugBaud")
+        if value is None:
+            return DEFAULT_DEBUG_BAUD
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_DEBUG_BAUD
+
+    def set_debug_baud(self, baud: int) -> None:
+        self._q.setValue("debugBaud", int(baud))
         self._q.sync()

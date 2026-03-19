@@ -2,199 +2,125 @@
 
 ## 1. 개요
 
-| 항목 | 내용 |
-|------|------|
-| MCU | STM32F070CBT6 |
-| 개발 도구 | STM32CubeIDE 2.0.0 |
-| 프로토콜 | Modbus RTU over RS-485 (KS X 3267 기반) |
-| 상태 | 외주 개발, 오류 발생 — 원인 분석 및 LSG-AX-ADG-26 신규 개발 예정 |
+- **MCU**: STM32F070CBT6  
+- **툴**: STM32CubeIDE 2.0.0  
+- **역할**: KS X 3267 기반 구동기 노드 (스위치 16CH + 개폐기 8/16CH, Modbus 485)  
+- **통신**: PC(마스터) ↔ 노드 USART1(RS485), 노드 USART3 ↔ 릴레이 보드(RS485)
 
 ---
 
-## 2. UART 구성
+## 2. 하드웨어·UART 구성
 
-| UART | 용도 | RS-485 DE | 비고 |
+| UART | 용도 | 초기 Baud | 비고 |
 |------|------|-----------|------|
-| UART1 | **Master (PC ↔ 노드)** | PA12 (GHC) | PC 프로그램과 통신 |
-| UART2 | Network | — | 내부 네트워크 |
-| UART3 | **Actuator (노드 ↔ 릴레이)** | PB1 (ACT) | 16CH/32CH 릴레이 보드 |
-| UART4 | Debug | — | printf, Debug_printf |
+| USART1 | 노드 ↔ PC(설정/테스트 툴) | 9600 | RS485 DE: PA12 (GHC_TX/RX_Enable) |
+| USART2 | 네트워크 | 38400 | |
+| USART3 | 노드 ↔ 릴레이 보드 | 9600 | RS485 DE: PB1 (ACT_TX/RX_Enable), 런타임 변경 가능 |
+| USART4 | 디버그 출력 | - | `_write()` 리다이렉트 |
+
+- **노드 주소**: GPIO PB3,PB4,PB5,PB13,PB14 (5비트, 1~31). 브로드캐스트 시 슬레이브 ID `0xFF` 수신 가능.
 
 ---
 
-## 3. 통신 파라미터
+## 3. 프로토콜 (Modbus RTU + KS X 3267)
 
-### Master (UART1) — PC ↔ 노드
+### 3.1 프레임 형식
 
-- 초기: **9600 8N1**
-- EEPROM 설정에 따라: 9600 또는 115200
-- `DEFAULT_NODE_BAUD = 0x0001` → 9600  
-  `DEFAULT_ACTUATOR_BAUD = 0x0003` → 115200
+- **표준 Modbus RTU**: [SlaveID][Function][Data...][CRC16 Lo][CRC16 Hi]
+- CRC: Modbus 표준 (crc_table 사용, LSB 선행).
 
-### Actuator (UART3) — 노드 ↔ 릴레이
+### 3.2 기능 코드
 
-- 초기: **9600 8N1**
-- EEPROM `nAct485Baud`: 0x0001→9600, 0x0003→115200
+| 기능 코드 | 이름 | 용도 |
+|-----------|------|------|
+| 0x03 | Read Holding Registers | 노드 레지스터 읽기 (주소 1~630) |
+| 0x04 | Read Input Registers | 특수 주소: 0xF001(ID), 0xF002(노드 Baud), 0xF003(구동기 Baud) |
+| 0x06 | Write Single Register | 0xF000 리셋, 0xF002 노드 Baud, 0xF003 구동기 Baud |
+| 0x10 | Write Multiple Registers | 노드/스위치/개폐기 제어 (501~629) |
 
-### PC 프로그램(LSG-AX-CTL-26) 설정
+### 3.3 레지스터 맵 (요약)
 
-- 포트: COMx (연결된 시리얼)
-- Baud: **9600** (기본) 또는 115200 — 노드 EEPROM 설정과 일치해야 함
-- 8N1, RS-485
+- **1~7**: 노드 정보 (기관코드, 제품타입=2, 프로토콜버전, 채널수 24/32, 시리얼 등)
+- **101~132**: 스위치/개폐기 설정 주소 (SWITCH_n_ADDR, OCSWITCH_n_ADDR)
+- **201~329**: 상태 (ACTNODE_OPID_0, ACTNODE_STATUS, 각 SW/OC 상태·OPID·시간)
+- **501~629**: 제어 (CON_ACTNODE_CMD/OPID, CON_SWITCH_n_*, CON_OCSWITCH_n_*)
+- **0xF000**: 명령(리셋 등), **0xF001~0xF003**: ID/노드 Baud/구동기 Baud
 
----
+### 3.4 보드레이트 코드 (EEPROM/레지스터 값)
 
-## 4. Modbus RTU 프로토콜 (Master/PC → 노드)
-
-### 4.1 노드 주소 (Slave ID)
-
-- **1~31**: GPIO (NODE_ID1~5)로 설정
-- **0xFF**: 브로드캐스트 (일부 기능용)
-
-### 4.2 사용 함수 코드
-
-| 코드 | 이름 | 용도 |
-|------|------|------|
-| 0x03 | Read Holding Registers | 일반 레지스터 읽기 |
-| 0x04 | Read Input Registers | 특수 주소 (ID/보드레이트 조회) |
-| 0x06 | Write Single Register | 보드레이트 변경, 공장 초기화 |
-| 0x10 | Write Multiple Registers | 제어 명령 (스위치, 개폐기) |
-
-### 4.3 레지스터 맵 (주요)
-
-#### 노드 정보 (읽기)
-
-| 주소 | 내용 |
-|------|------|
-| 1 | 기관 코드 |
-| 2 | 회사 코드 |
-| 3 | 제품 유형 (2=구동기) |
-| 4 | 제품 코드 |
-| 5 | 프로토콜 버전 |
-| 6 | 채널 수 (24 또는 32) |
-| 7~8 | 시리얼 번호 |
-
-#### 스위치 설정 (101~116, 117~132)
-
-- 101~116: SWITCH 1~16 타입 (102=스위치)
-- 117~132: OCSWITCH 1~16 타입 (112=개폐기)
-
-#### 제어 주소
-
-| 주소 | 내용 |
-|------|------|
-| 501 | 구동기 노드 제어권 (1=로컬, 2=원격, 3=수동) |
-| 502 | OPID #0 |
-| 503~565 | 스위치 1~16 제어 (CMD, OPID, Time 4바이트) |
-| 567~629 | 개폐기 1~16 제어 |
-
-#### 특수 주소
-
-| 주소 | 기능 |
-|------|------|
-| 0xF000 | 공장 초기화 (Write Single) |
-| 0xF001 | 노드 ID 확인 (Read Input) |
-| 0xF002 | 노드 보드레이트 (Read/Write) |
-| 0xF003 | Actuator 보드레이트 (Read/Write) |
+- **노드(USART1) / 구동기(USART3) 공통**:  
+  `0x0001`=9600, `0x0002`=19200, `0x0003`=38400, `0x0004`=57600, `0x0005`=115200  
+- **기본값**: `DEFAULT_NODE_BAUD = 0x0001`, `DEFAULT_ACTUATOR_BAUD = 0x0003` (define.h).
 
 ---
 
-## 5. 노드 버전 (NodeVersion)
+## 4. KS X 3267 관련 정의 (define.h / struct.h)
 
-| 값 | 구성 |
-|----|------|
-| RELAY_16CH_VER (2) | 스위치 16ch + 개폐기 8ch (16ch 릴레이 2개) |
-| RELAY_32CH_VER (3) | 스위치 16ch + 개폐기 16ch (32ch 릴레이 1개) |
-
-현재 `define.h`: `NodeVersion = RELAY_32CH_VER`
-
----
-
-## 6. 릴레이 보드 Modbus (UART3)
-
-### Slave ID
-
-- 0x01: SW 16ch
-- 0x02: OCS 16ch (첫 번째)
-- 0x03: OCS 16ch EXT (두 번째, 32ch 구성 시)
-
-### 명령
-
-- **Read (0x03)**: Holding Register 0x0000, 2워드 → 32비트 릴레이 상태
-- **Write Multiple Coils (0x0F)**: 주소 0x0000, 32코일 → 릴레이 제어
+- **제어 모드**: CONTROL_LOCAL(1), CONTROL_REMOTE(2), CONTROL_MANUAL(3)  
+- **스위치 명령**: CONTROL_OFF(0), CONTROL_ON(201), CONTROL_TIMED_ON(202) 등  
+- **개폐기 명령**: CONTROL_OPEN(301), CONTROL_CLOSE(302), CONTROL_TIMED_OPEN(303) 등  
+- **상태 코드**: COMMON_ON(201), COMMON_OPENING(301), COMMON_CLOSING(302) 등  
+- **노드 버전**: `NodeVersion` = RELAY_16CH_VER(2) or RELAY_32CH_VER(3) → 스위치 16 + 개폐기 8/16 또는 16+16.
 
 ---
 
-## 7. 알려진 문제 및 개선 포인트
+## 5. 동작 흐름 (요약)
 
-### 7.1 OCS EXT 응답 처리 오류 (버그)
+1. **전원/리셋**  
+   EEPROM CONFIG_CHECK → NODE_CONFIG_NONE / DEFAULT_WRITE_OK / INSTALL_WRITE_OK 에 따라 Default/Install 설정 로드, 노드·구동기 Baud 적용.
 
-**파일**: `Actuator_Process.c` 606~615행
+2. **마스터(PC) → 노드**  
+   USART1 수신 → `Master_RS485_Push_Data` → `Master_Buffer_Process` → 패킷 완료 시 `Master_Packet_Process`.  
+   - 패킷 끝 판단: 수신 중단 후 `ActNode.nRxEndTime` 만료 (RX_END_TIME = 4, 단위는 틱).
 
-OCS EXT Write 응답 처리에서 `Actuator_OCS_Control.State`를 검사함 (OCS용).  
-OCS EXT는 `Actuator_OCS_EXT_Control.State`를 사용해야 함.
+3. **노드 → 릴레이**  
+   `Actuator_OCS_Relay_Control_Proecess`, `Actuator_SW_Relay_Control_Proecess` 등에서 USART3로 Modbus 전송.
 
-```c
-// 현재 (오류)
-else if(Actuator_Ring_Buffer.Acutator == ACTUATOR_OCS_EXT_RELAY16CH_WRITE)
-{
-    if(pPacket[1] == 0x0F && pPacket[5] == 0x20)
-    {
-        Actuator_OCS_Control.State = ACTUATOR_SEND_OK;  // ← 잘못된 구조체
-```
-
-**수정 예시**:
-```c
-Actuator_OCS_EXT_Control.State = ACTUATOR_SEND_OK;
-```
-
-### 7.2 Master 링 버퍼 오버플로우 미처리
-
-`Master_RS485_Push_Data`에는 오버플로우 처리가 없음.  
-Actuator 링 버퍼는 `Actuator_RS485_Push_Data`에서 오버플로우 시 `nRxOverflowCnt` 증가 및 버퍼 정리 로직이 있음 (25.12.31 수정).
-
-Master도 동일하게 오버플로우 대응이 필요함.
-
-### 7.3 패킷 종료 판단
-
-`ActNode.nRxEndTime`이 0이 되었을 때 패킷 종료로 간주.  
-1ms 타이머에서 감소, `RX_END_TIME = 4` → 수신 후 4ms 무응답 시 종료.
-
-- 고속 전송/다중 패킷에서 경계 오인 가능성 있음.
-- Modbus RTU 권장: 3.5캐릭터 타임 이상 공백 시 프레임 종료.
-
-### 7.4 Read Input vs Read Holding
-
-- 0xF001, 0xF002, 0xF003: **Read Input (0x04)** 로 처리.
-- 일반 데이터: **Read Holding (0x03)**.
-- PC 프로그램 구현 시 이 구분을 준수해야 함.
-
-### 7.5 보드레이트 코드
-
-| 코드 | 보드레이트 |
-|------|------------|
-| 0x0001 | 9600 |
-| 0x0003 | 115200 |
+4. **릴레이 → 노드**  
+   USART3 수신 → `Actuator_RS485_Push_Data` → `Actuator_Buffer_Process` → CRC 검사 후 상태 반영.
 
 ---
 
-## 8. PC 프로그램(LSG-AX-CTL-26) 연동 시 참고
+## 6. 검토 시 유의사항 및 잠재 이슈
 
-1. **연결**: RS-485를 통한 UART1 (Master) 연결
-2. **초기 설정**: 9600 8N1로 시도, 필요 시 115200
-3. **노드 주소**: 1~31 (하드웨어 점퍼/GPIO 설정 확인)
-4. **레지스터**: `define.h` 레지스터 주소 및 `struct.h` 데이터 구조 참고
-5. **CRC**: Modbus RTU CRC-16 (LSB 먼저)
+1. **마스터 수신 버퍼 오버플로우 (수정 완료)**  
+   `Master_RS485_Push_Data`를 `Actuator_RS485_Push_Data`와 동일하게 수정: 버퍼 풀 시 Process 인덱스를 진행시켜 가장 오래된 바이트를 버리고, 최신 수신만 유지하도록 함.
+
+2. **패킷 끝 판단 (4ms)**  
+   `RX_END_TIME = 4` (4 틱)으로 프레임 종료 판단. 저속(9600)에서 프레임이 길면 4ms 미만 간격으로 연속 수신 시 이론상 프레임 분리 오인 가능. 필요 시 3.5 character time 이상으로 여유 두는 방식 검토.
+
+3. **Read 레지스터 수량 상한 (예외 허용)**  
+   Modbus 표준은 레지스터 Read 수량 최대 125(0x7D).  
+   본 펌웨어는 **의도적으로 최대 135(0x87)까지 허용** (예외 처리). 해당 한도 유지 및 주석으로 명시함.
+
+4. **EEPROM 보드레이트 저장**  
+   `CONFIG_DATA.nNode485Baud`, `nAct485Baud`는 `uint16_t`인데, EEPROM에는 `E2P_Write_Byte`로 1바이트씩만 저장(Load 시에도 1바이트씩).  
+   현재 사용 코드(0x0001~0x0005)는 하위 1바이트만 있어도 동작하지만, 상위 바이트가 의미 있게 쓰일 경우 저장/복원 불일치 가능.  
+   장기적으로는 2바이트씩 저장/로드하거나, 사용 범위를 0~255로 고정하는 것이 명확함.
+
+5. **디버그 출력**  
+   `Debug_printf`는 USART4로 출력. 실제 보드에서 디버그 포트 미연결 시 불필요한 블로킹이나 버퍼 쌓임 가능.  
+   `MASTER_DEBUG`, `ACTUATOR_DEBUG` 매크로로 로그 최소화 가능(define.h).
+
+6. **Actuator 링버퍼**  
+   `Actuator_RS485_Push_Data`에 오버플로우 처리 및 인덱스 wrap 수정(25.12.31) 적용됨.  
+   통신 로그/오류 시 이 버퍼와 `nRxOverflowCnt` 확인하면 수신 쪽 이슈 분석에 도움됨.
 
 ---
 
-## 9. 디버그 출력 (UART4)
+## 7. 테스트 프로그램(LSG-AX-CTL-26) 연동 시 참고
 
-`Debug_printf`로 다음 정보 출력:
+- **연결**: PC는 노드 USART1(RS485)에 해당하는 COM 포트로 접속.  
+- **초기 통신**: 노드 기본 노드 Baud 9600, 구동기 38400.  
+- **노드 주소**: 1~31 또는 브로드캐스트 0xFF(해당 처리되는 명령만).  
+- **레지스터 읽기**: 0x03으로 1번지부터 필요한 개수만큼 읽기 (수량 ≤125 권장).  
+- **보드레이트 변경**: 0x04로 0xF002/0xF003 읽어 현재 값 확인 후, 0x06으로 0x0001~0x0005 기록.  
+  변경 후에는 해당 UART를 선택한 Baud로 다시 오픈해야 함.
 
-- 부팅 메시지
-- 패킷 수신/처리 결과
-- 릴레이 읽기/쓰기 상태
-- 보드레이트 변경 로그
+---
 
-통신 로그 수집 시 UART4를 PC에 연결해 시리얼 터미널로 확인 가능.
+## 8. 요약
+
+- 펌웨어는 **Modbus RTU over RS485**와 **KS X 3267** 주소·코드를 따르며, 스위치/개폐기 제어와 노드·구동기 보드레이트 설정이 가능함.  
+- 통신 로그/오류 원인 분석 시에는 **마스터 수신 버퍼 처리**, **패킷 끝 타이밍**, **Read 수량 상한**, **EEPROM 보드레이트 저장 방식**을 우선 확인하는 것이 좋음.  
+- 위 사항들을 반영한 수정·보완 후, 신규 프로젝트 **LSG-AX-ADG-26**으로 재구성하는 흐름을 권장함.

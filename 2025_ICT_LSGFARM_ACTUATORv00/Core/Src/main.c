@@ -221,6 +221,7 @@ int main(void)
 
 	NETWORK_POWER_ON;
 	Debug_printf(" ActNode.nNodeID = %04X\r\n" ,ActNode.nNodeID);
+	Debug_printf(" NodeVersion=%d (2=16CH, 3=32CH)\r\n", NodeVersion);
 
 	Actuator_OCS_Control.Step = OCS_RELAY_STEP_IDLE;
 	Actuator_OCS_EXT_Control.Step = OCS_EXT_RELAY_STEP_IDLE;

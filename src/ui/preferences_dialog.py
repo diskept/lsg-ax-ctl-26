@@ -63,12 +63,22 @@ class SerialSettingsPage(QWidget):
         self._timeout_spin.setSuffix(" ms")
         layout.addRow("Timeout (ms):", self._timeout_spin)
 
+        self._dbg_port_combo = QComboBox()
+        self._dbg_port_combo.setEditable(True)
+        layout.addRow("FW Debug Port:", self._dbg_port_combo)
+
+        self._dbg_baud_combo = QComboBox()
+        self._dbg_baud_combo.addItems(["38400"])
+        layout.addRow("FW Debug Baud:", self._dbg_baud_combo)
+
         rescan_btn.clicked.connect(self._on_rescan)
 
     def _refresh_ports(self) -> None:
         ports = SerialService().list_ports()
         self._port_combo.clear()
         self._port_combo.addItems(ports)
+        self._dbg_port_combo.clear()
+        self._dbg_port_combo.addItems(ports)
 
     def _on_rescan(self) -> None:
         current = self._port_combo.currentText().strip()
@@ -89,9 +99,19 @@ class SerialSettingsPage(QWidget):
                 self._port_combo.setCurrentIndex(idx)
             else:
                 self._port_combo.setCurrentText(last_port)
+        dbg_port = self._settings.get_debug_port()
+        if dbg_port:
+            idx = self._dbg_port_combo.findText(dbg_port)
+            if idx >= 0:
+                self._dbg_port_combo.setCurrentIndex(idx)
+            else:
+                self._dbg_port_combo.setCurrentText(dbg_port)
         idx_baud = self._baud_combo.findText(str(self._settings.get_baud()))
         if idx_baud >= 0:
             self._baud_combo.setCurrentIndex(idx_baud)
+        idx_dbg_baud = self._dbg_baud_combo.findText(str(self._settings.get_debug_baud()))
+        if idx_dbg_baud >= 0:
+            self._dbg_baud_combo.setCurrentIndex(idx_dbg_baud)
         idx_parity = self._parity_combo.findText(self._settings.get_parity())
         if idx_parity >= 0:
             self._parity_combo.setCurrentIndex(idx_parity)
@@ -110,6 +130,8 @@ class SerialSettingsPage(QWidget):
         self._settings.set_data_bits(int(self._data_bits_combo.currentText()))
         self._settings.set_stop_bits(self._stop_bits_combo.currentText())
         self._settings.set_timeout_ms(self._timeout_spin.value())
+        self._settings.set_debug_port(self._dbg_port_combo.currentText().strip())
+        self._settings.set_debug_baud(int(self._dbg_baud_combo.currentText()))
 
 
 class NodeSettingsPage(QWidget):

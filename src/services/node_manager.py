@@ -4,6 +4,8 @@ import logging
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.core.settings import AppSettings
+from src.services.actuator_test_sequence import ActuatorTimedSequence
+from src.services.debug_listener import DebugSerialListener
 from src.services.serial_service import SerialService
 
 logger = logging.getLogger("node_manager")
@@ -23,6 +25,8 @@ class NodeManager(QObject):
         super().__init__(parent)
         self._serial = SerialService(self)
         self._settings = AppSettings()
+        self._debug = DebugSerialListener()
+        self._act_test = ActuatorTimedSequence(self._serial, self._settings)
 
     def is_connected(self) -> bool:
         """Return whether the serial service is currently connected."""
@@ -56,12 +60,35 @@ class NodeManager(QObject):
         )
 
     def disconnect(self) -> None:
-        """Close the service and emit disconnected, info, serial_params_changed."""
+        """Close the service and emit disconnected, info, serial_params_changed. 테스트 시퀀스 정지."""
         logger.info("disconnect")
+        try:
+            self.stop_firmware_debug_log()
+        except Exception:
+            pass
+        if self._act_test.is_running():
+            self._act_test.stop()
+            logger.info("test sequence stopped by disconnect")
         self._serial.close()
         self.disconnected.emit()
         self.info.emit("disconnect")
         self._emit_serial_params_changed()
+
+    def start_firmware_debug_log(self) -> bool:
+        """Start reading firmware debug UART and write to app log."""
+        port = self._settings.get_debug_port()
+        baud = self._settings.get_debug_baud()
+        ok = self._debug.start(port=port, baud=baud, timeout_ms=200)
+        if ok:
+            self.info.emit(f"FW debug listening: {port} @ {baud}")
+        else:
+            self.error.emit(f"FW debug open failed: {port} @ {baud}")
+        return ok
+
+    def stop_firmware_debug_log(self) -> None:
+        if self._debug.is_running():
+            self._debug.stop()
+            self.info.emit("FW debug listener stopped")
 
     def _params_dict(self) -> dict:
         return {
@@ -77,9 +104,23 @@ class NodeManager(QObject):
         self.serial_params_changed.emit(self._serial.is_connected(), self._params_dict())
 
     def test(self) -> None:
-        """Placeholder."""
-        logger.info("Test executed (stub)")
-        self.info.emit("Test executed (stub).")
+        """Run actuator OCS timed test sequence (1..16)."""
+        if not self._serial.is_connected():
+            self.error.emit("Not connected")
+            return
+        # Ensure debug capture is running (best-effort).
+        try:
+            self.start_firmware_debug_log()
+        except Exception:
+            pass
+        if self._act_test.is_running():
+            self.info.emit("Test already running")
+            return
+        ok = self._act_test.start()
+        if ok:
+            self.info.emit("타임 동작 테스트 시작 (종료 없음, 매 분 OCS 1초 간격)")
+        else:
+            self.error.emit("Failed to start test")
 
     def connect_with(
         self,
@@ -104,9 +145,16 @@ class NodeManager(QObject):
         self._settings.set_timeout_ms(timeout_ms)
         if self._serial.open(port, baud=baud, timeout_ms=timeout_ms):
             logger.info("connected")
+            if self._act_test.is_running():
+                self._act_test.stop()
+                logger.info("test sequence reset by connect")
             self.connected.emit(port)
             self.info.emit("connected")
             self._emit_serial_params_changed()
+            try:
+                self.start_firmware_debug_log()
+            except Exception:
+                pass
             return True
         logger.error("connect failed")
         self.error.emit("connect failed")
