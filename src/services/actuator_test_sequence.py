@@ -110,6 +110,15 @@ class ActuatorTimedSequence:
                 opid_addr = self.OCS_OPID_BASE_ADDR + (ch - 1) * 4
                 read_req = build_read_holding_registers_request(slave, opid_addr, 1)
                 for attempt in range(1, RETRY_COUNT + 1):
+                    # Keep request/response framing clean when prior attempt left bytes in buffer.
+                    stale = self._serial.read_all()
+                    if stale:
+                        logger.warning(
+                            "CH%02d pre-read drain %dB stale: %s",
+                            ch,
+                            len(stale),
+                            hex_bytes(stale),
+                        )
                     logger.info("CH%02d OPID-READ TX : %s", ch, hex_bytes(read_req))
                     self._serial.write(read_req)
                     resp = read_exact(self._serial.read, 7, timeout_s=1.5)
@@ -125,6 +134,15 @@ class ActuatorTimedSequence:
                         time.sleep(RETRY_INTERVAL_S)
 
                 opid = (current_opid + 1) & 0xFFFF
+                # Firmware-side OPID gate is strict-increasing in many paths.
+                # When current OPID wraps from 0xFFFF, avoid sending 0 and start from 1.
+                if opid == 0:
+                    logger.warning(
+                        "CH%02d OPID wrap detected current=%d -> next=0; use OPID=1 to avoid wrap reject",
+                        ch,
+                        current_opid,
+                    )
+                    opid = 1
                 addr = self.OCS_CMD_BASE_ADDR + (ch - 1) * self.OCS_ADDR_STEP
                 logger.info("CH%02d ADDR=%d (OCS%d) OPID=%d", ch, addr, ch, opid)
                 values = [
@@ -138,6 +156,14 @@ class ActuatorTimedSequence:
                 # 2) 명령 전송 (실패 시 최대 3회 재시도, 500ms 간격)
                 write_ok = False
                 for attempt in range(1, RETRY_COUNT + 1):
+                    stale = self._serial.read_all()
+                    if stale:
+                        logger.warning(
+                            "CH%02d pre-write drain %dB stale: %s",
+                            ch,
+                            len(stale),
+                            hex_bytes(stale),
+                        )
                     logger.info("CH%02d OPID=%d TX : %s", ch, opid, hex_bytes(req))
                     self._serial.write(req)
                     resp = read_exact(self._serial.read, 8, timeout_s=2.0)

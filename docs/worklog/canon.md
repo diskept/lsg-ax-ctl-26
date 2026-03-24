@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-03-24 (추가 디버깅 라운드)
+
+### 한 일
+- `2026-03-24.log` 18:00 이후 구간 재분석.
+- 펌웨어 `[FWDIAG][UART3][STAT]` 및 Canon `debug_listener.diag` 집계 동작 확인.
+- OPID 래핑 구간 대응:
+  - Canon에서 `OPID=0` 전송 회피(`65535 -> 1`) 로직 추가.
+- 간헐 `attempt 1/3` 실패 완화:
+  - OPID-READ/WRITE 송신 전 `read_all()`로 stale 바이트 drain 후 전송.
+- FWDIAG 파서 안정화:
+  - 숫자형 `key=value`만 집계하여 붙은 문자열로 인한 통계 오염 감소.
+
+### 다음 할 일
+- 최신 빌드로 장시간 재시험 후 `FWDIAG UART3.STAT`/`OCS GIVEUP` 전후 비교.
+- 필요 시 펌웨어 `Master_Process.c`의 OPID 비교를 wrap-aware 방식으로 개선.
+
+### 참고 파일 / 커밋
+- 파일: `src/services/actuator_test_sequence.py`, `src/services/debug_listener.py`, `src/services/fw_diag_parser.py`
+- 커밋: (이번 커밋 예정)
+
+### 이슈 / 메모
+- 18시 이후 구간에서 치명 장애는 크게 줄었고, 간헐 1차 시도 실패는 남아 있음.
+
+---
+
 ## 2026-03-24
 
 ### 한 일

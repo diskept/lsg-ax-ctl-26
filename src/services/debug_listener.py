@@ -2,9 +2,11 @@ import logging
 import threading
 import time
 
+from src.services.fw_diag_parser import parse_fw_diag_line
 from src.services.serial_service import SerialService
 
 logger = logging.getLogger("debug_listener")
+diag_logger = logging.getLogger("debug_listener.diag")
 
 
 class DebugSerialListener:
@@ -14,6 +16,7 @@ class DebugSerialListener:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._serial = SerialService()
+        self._diag_counts: dict[str, int] = {}
 
     def start(self, port: str, baud: int = 38400, timeout_ms: int = 200) -> bool:
         if self.is_running():
@@ -52,6 +55,16 @@ class DebugSerialListener:
                     if text.strip() == ">>":
                         continue
                     logger.info("[FW] %s", text)
+                    diag = parse_fw_diag_line(text)
+                    if diag:
+                        key = f"{diag.group}.{diag.event}"
+                        self._diag_counts[key] = self._diag_counts.get(key, 0) + 1
+                        diag_logger.warning(
+                            "[FWDIAG] key=%s count=%d values=%s",
+                            key,
+                            self._diag_counts[key],
+                            diag.values,
+                        )
                     continue
                 raw = self._serial.read_all()
                 if raw:
