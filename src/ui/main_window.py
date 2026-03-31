@@ -107,6 +107,10 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel()
         self._status_bar.addWidget(self.summary_label, 1)
         self.summary_label.hide()
+        self._health_label = QLabel()
+        self._health_label.setStyleSheet("color: #c90;")
+        self._health_label.hide()
+        self._status_bar.addPermanentWidget(self._health_label)
         self.setStatusBar(self._status_bar)
 
     def _init_ocs_lamp_dock(self) -> None:
@@ -208,6 +212,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         nm = self._context.node_manager
         nm.serial_params_changed.connect(self._on_serial_params_changed)
+        nm.comm_health.connect(self._on_comm_health)
         nm.info.connect(self._on_info)
         nm.error.connect(self._on_error)
         self._update_connect_actions_enabled(not nm.is_connected())
@@ -223,6 +228,7 @@ class MainWindow(QMainWindow):
         if connected:
             self._ever_connected = True
             self.refresh_serial_summary(True, params)
+            self._health_label.show()
             self.statusBar().showMessage("Connected", 1500)
             # 연결 시 선택된 구동기 타입에 따라 개폐기 램프 개수 재구성
             n = self._settings.get_ocs_channel_count()
@@ -230,7 +236,16 @@ class MainWindow(QMainWindow):
         else:
             if self._ever_connected:
                 self.statusBar().showMessage("Disconnected", 1500)
+            self._health_label.hide()
+            self._health_label.clear()
             self.refresh_serial_summary(False, params)
+
+    @pyqtSlot(str)
+    def _on_comm_health(self, text: str) -> None:
+        if not text:
+            self._health_label.clear()
+            return
+        self._health_label.setText(text)
 
     @pyqtSlot(str)
     def _on_info(self, msg: str) -> None:

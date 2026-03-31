@@ -17,6 +17,8 @@ class DebugSerialListener:
         self._thread: threading.Thread | None = None
         self._serial = SerialService()
         self._diag_counts: dict[str, int] = {}
+        self._last_rx_mono: float = 0.0
+        self._idle_warn_mono: float = 0.0
 
     def start(self, port: str, baud: int = 38400, timeout_ms: int = 200) -> bool:
         if self.is_running():
@@ -24,6 +26,9 @@ class DebugSerialListener:
         ok = self._serial.open(port, baud=baud, timeout_ms=timeout_ms)
         if not ok:
             return False
+        now = time.monotonic()
+        self._last_rx_mono = now
+        self._idle_warn_mono = now
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="DebugSerialListener", daemon=True)
         self._thread.start()
@@ -41,6 +46,12 @@ class DebugSerialListener:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def idle_seconds(self) -> float | None:
+        """Seconds since last FW line/raw; None if listener not running."""
+        if not self.is_running():
+            return None
+        return time.monotonic() - self._last_rx_mono
+
     def _run(self) -> None:
         # Mixed firmware outputs happen; accept both lines and raw bytes.
         while not self._stop.is_set():
@@ -54,6 +65,7 @@ class DebugSerialListener:
                     # Firmware prompt spam (Master_Actuator_OnTime_Process) — keep logs readable.
                     if text.strip() == ">>":
                         continue
+                    self._last_rx_mono = time.monotonic()
                     logger.info("[FW] %s", text)
                     diag = parse_fw_diag_line(text)
                     if diag:
@@ -68,8 +80,16 @@ class DebugSerialListener:
                     continue
                 raw = self._serial.read_all()
                 if raw:
+                    self._last_rx_mono = time.monotonic()
                     logger.info("[FW:RAW] %s", raw.hex(" "))
                 else:
+                    idle = time.monotonic() - self._last_rx_mono
+                    if idle >= 15.0 and (time.monotonic() - self._idle_warn_mono) >= 12.0:
+                        self._idle_warn_mono = time.monotonic()
+                        logger.warning(
+                            "[CANON] FW debug RX idle %.1fs (MCU UART hang / cable / wrong port?)",
+                            idle,
+                        )
                     time.sleep(0.02)
             except Exception as e:
                 logger.exception("debug listener error: %s", e)

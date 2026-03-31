@@ -1,7 +1,7 @@
 """NodeManager service — scan/connect/test using SerialService and AppSettings."""
 import logging
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from src.core.settings import AppSettings
 from src.services.actuator_test_sequence import ActuatorTimedSequence
@@ -20,6 +20,7 @@ class NodeManager(QObject):
     info = pyqtSignal(str)
     error = pyqtSignal(str)
     serial_params_changed = pyqtSignal(bool, dict)  # (connected, params)
+    comm_health = pyqtSignal(str)  # short line for status bar (FW debug age, Modbus streak)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -27,6 +28,9 @@ class NodeManager(QObject):
         self._settings = AppSettings()
         self._debug = DebugSerialListener()
         self._act_test = ActuatorTimedSequence(self._serial, self._settings)
+        self._health_timer = QTimer(self)
+        self._health_timer.setInterval(1500)
+        self._health_timer.timeout.connect(self._emit_comm_health)
 
     def is_connected(self) -> bool:
         """Return whether the serial service is currently connected."""
@@ -70,6 +74,8 @@ class NodeManager(QObject):
             self._act_test.stop()
             logger.info("test sequence stopped by disconnect")
         self._serial.close()
+        self._health_timer.stop()
+        self.comm_health.emit("")
         self.disconnected.emit()
         self.info.emit("disconnect")
         self._emit_serial_params_changed()
@@ -102,6 +108,20 @@ class NodeManager(QObject):
 
     def _emit_serial_params_changed(self) -> None:
         self.serial_params_changed.emit(self._serial.is_connected(), self._params_dict())
+
+    def _emit_comm_health(self) -> None:
+        if not self._serial.is_connected():
+            return
+        parts: list[str] = []
+        idle = self._debug.idle_seconds()
+        if idle is not None:
+            if idle >= 12.0:
+                parts.append(f"FW DBG idle {idle:.0f}s !")
+            else:
+                parts.append(f"FW DBG {idle:.1f}s")
+        if self._act_test.is_running() and self._act_test.modbus_fail_streak > 0:
+            parts.append(f"MB fail ×{self._act_test.modbus_fail_streak}")
+        self.comm_health.emit(" · ".join(parts) if parts else " comm OK")
 
     def test(self) -> None:
         """Run actuator OCS timed test sequence (1..16)."""
@@ -155,6 +175,7 @@ class NodeManager(QObject):
                 self.start_firmware_debug_log()
             except Exception:
                 pass
+            self._health_timer.start()
             return True
         logger.error("connect failed")
         self.error.emit("connect failed")

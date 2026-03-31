@@ -42,6 +42,7 @@ class ActuatorTimedSequence:
         self._settings = settings
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._modbus_fail_streak = 0
 
     def start(self) -> bool:
         if self.is_running():
@@ -58,9 +59,32 @@ class ActuatorTimedSequence:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         self._thread = None
+        self._modbus_fail_streak = 0
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def modbus_fail_streak(self) -> int:
+        return self._modbus_fail_streak
+
+    def _note_modbus_ok(self) -> None:
+        if self._modbus_fail_streak:
+            logger.info("[CANON] Modbus recovered after fail streak was %d", self._modbus_fail_streak)
+        self._modbus_fail_streak = 0
+
+    def _note_modbus_fail(self, kind: str, ch: int) -> None:
+        self._modbus_fail_streak += 1
+        logger.error(
+            "[CANON] Modbus fail streak=%d kind=%s CH=%02d (FW [UART3][STAT]/[STALL]/node dead?)",
+            self._modbus_fail_streak,
+            kind,
+            ch,
+        )
+        if self._modbus_fail_streak == 5 or self._modbus_fail_streak % 10 == 0:
+            logger.error(
+                "[CANON] Sustained Modbus loss — compare FW debug silence vs [FWDIAG][UART3] rx_delta=0; see docs/worklog/integration-debug.md"
+            )
 
     def _channel_count(self) -> int:
         return self._settings.get_ocs_channel_count()
@@ -125,6 +149,7 @@ class ActuatorTimedSequence:
                     if len(resp) == 7 and resp[1] == 0x03 and resp[2] == 0x02:
                         current_opid = (resp[3] << 8) | resp[4]
                         logger.info("CH%02d current OPID=%d", ch, current_opid)
+                        self._note_modbus_ok()
                         break
                     logger.error(
                         "CH%02d OPID-READ RX error len=%d (attempt %d/%d) : %s",
@@ -132,6 +157,8 @@ class ActuatorTimedSequence:
                     )
                     if attempt < RETRY_COUNT:
                         time.sleep(RETRY_INTERVAL_S)
+                    else:
+                        self._note_modbus_fail("OPID-READ", ch)
 
                 opid = (current_opid + 1) & 0xFFFF
                 # Firmware-side OPID gate is strict-increasing in many paths.
@@ -169,6 +196,7 @@ class ActuatorTimedSequence:
                     resp = read_exact(self._serial.read, 8, timeout_s=2.0)
                     if len(resp) == 8:
                         logger.info("CH%02d OPID=%d RX : %s", ch, opid, hex_bytes(resp))
+                        self._note_modbus_ok()
                         write_ok = True
                         break
                     logger.error(
@@ -177,6 +205,8 @@ class ActuatorTimedSequence:
                     )
                     if attempt < RETRY_COUNT:
                         time.sleep(RETRY_INTERVAL_S)
+                    else:
+                        self._note_modbus_fail("WRITE", ch)
                 if not write_ok:
                     logger.warning("CH%02d OPID=%d give up after %d attempts, skip to next channel", ch, opid, RETRY_COUNT)
 
