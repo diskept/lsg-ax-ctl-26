@@ -6,9 +6,10 @@
 
 ## 현재 기준 상태
 
+- **2026-04-07 16:54**: Windows 재부팅으로 테스트 중지, **오류 없음**. 이후 Canon은 **PowerShell에서 `python main.py`** 로 실행( Cursor 터미널 비사용). 상세 → `docs/worklog/integration-debug.md` (`2026-04-07`).
 - **2026-03-28**: UART3 스톨 감시·STAT 확장·소프트/하드 복구 펌웨어 패치 + Canon FW idle / Modbus streak / 상태바. → `docs/worklog/integration-debug.md` (`2026-03-28`).
 - **2026-03-27 통합 장애 요약**: 전 채널 타이머 종료·릴레이 OFF 후 `~08:41:33`부터 `debug_listener` 단절, 이후 Modbus 무응답. 상세·원인·대응 → `@docs/worklog/integration-debug.md` (섹션 `2026-03-27`).
-- Canon 레포 최신 기준 커밋: `2c094d6`
+- Canon 레포 최신 기준 커밋: 문서 갱신 시 `git rev-parse HEAD`로 확인 (과거 예: `e8ed2cd`).
 - 최근 핵심 변경:
   - `src/services/actuator_test_sequence.py`
     - OPID wrap 시 `0` 대신 `1` 전송
@@ -23,8 +24,9 @@
 
 ```text
 작업 파트: Canon 통신 디버깅
-기준 커밋: 2c094d6
-기준 문서: @docs/worklog/canon.md @docs/CONTEXT_MIN.md
+기준 커밋: (git rev-parse HEAD)
+실행: PowerShell에서 python main.py
+기준 문서: @docs/worklog/integration-debug.md @docs/CONTEXT_MIN.md
 오늘 할 일: (한 줄로 구체적으로)
 ```
 
